@@ -1,0 +1,159 @@
+---
+title: "task 1"
+author: "Mari Herbst"
+date: "1/28/2022"
+output: html_document
+code_folding: hide
+---
+
+```{r setup, include=TRUE, warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# attach packages
+library(tidyverse)
+library(here)
+library(patchwork)
+library(broom)
+library(kableExtra)
+```
+
+# Introduction
+
+# Data
+
+## Citation
+
+Abrahamson, W.G. 2019. Survival, growth and biomass estimates of two dominant palmetto species of south-central Florida from 1981 - 2017, ongoing at 5-year intervals ver 1. Environmental Data Initiative. https://doi.org/10.6073/pasta/f2f96ec76fbbd4b9db431c79a770c4d5
+
+## Visualizations
+
+```{r}
+palmetto <- read_csv(here("data", "palmetto.csv")) %>% # read in data using here() to create a system agnostic file path
+  mutate(species = ifelse(species == 1, "repens", "etonia")) %>% # change species number to species name for clarity
+  select(species, height, length, width, green_lvs) %>%
+  drop_na()
+
+palmetto$species <- as.factor(palmetto$species) # change species from character to factor
+```
+
+Factor ranking:
+
+species 1: Sabal etonia
+species 2: Serenoa repens
+
+Some visualizations to explore relationships between variables.
+
+```{r}
+length_height <- ggplot(data = palmetto, aes(x = length, y = height)) +
+  geom_point(aes(color = species), show.legend = FALSE) + # color by species, remove legend
+  facet_wrap(~species) + # 2 plots by species
+  scale_color_manual(values = c("etonia" = "darkolivegreen", "repens" = "darkolivegreen2")) + # set color for each species
+  labs(x = "length (cm)", # add axis labels and title
+       y = "height (cm)",
+       title = "(a) Comparison of Serenoa repens and Sabal etonia palmetto length and height") +
+  theme(plot.title = element_text(hjust = 0.5, # adjust title position and size
+                                  size = 10.5))
+```
+
+```{r}
+leaves_width <- ggplot(data = palmetto, aes(x = green_lvs, y = width)) +
+  geom_point(aes(color = species)) + # color by species
+  scale_color_manual(values = c("etonia" = "darkolivegreen", "repens" = "darkolivegreen2")) + # set color for each species
+  labs(x = "# green leaves", # label axes and title
+       y = "width (cm)",
+       title = "(b) Comparison of Serenoa repens and Sabal etonia palmetto width and leafiness") +
+  theme(plot.title = element_text(hjust = 0.3, # adjust title position and size
+                                  size = 10.5))
+```
+
+```{r}
+species_leaves <- ggplot(data = palmetto, aes(x = species, y = green_lvs)) +
+  geom_jitter(aes(color = species), show.legend = FALSE) + # color by species, remove legend
+  scale_color_manual(values = c("etonia" = "darkolivegreen", "repens" = "darkolivegreen2")) + # set color for each species
+  labs(x = "species", # add axes labels and title
+       y = "# green leaves",
+       title = "(c) Comparison of Serenoa repens and Sabal etonia palmetto leafiness") +
+  theme(plot.title = element_text(hjust = 0.5, # adjust title position and size
+                                  size = 10.5))
+```
+
+```{r}
+# combine visualizations using patchwork
+length_height + leaves_width + species_leaves + plot_layout(ncol = 1, heights = c(8,8,8)) # set number of columns and size of graphs
+```
+
+
+**Figure 1**: *(a)* An exploration of canopy lengths and plant heights of *Serenoa repens* (light green) and *Sabal etonia* (dark green), two species of palmetto. *(b)* A comparison of canopy width versus leafiness of *Serenoa repens* and *Sabal etonia* palmettos. *(c)* Shows the relative leafiness of the two palmetto species.
+
+From comparing these variables and analyzing the visualizations, it appears as though leafiness may be a distinct characteristic between the two species. *Serenoa repens* also seems to trend somewhat taller, while *Sabal etonia* trends somewhat longer.
+
+# Binary logistic regression models
+
+```{r}
+# create the formulas
+f1 <- species ~ height + length + width + green_lvs
+f2 <- species ~ height + width + green_lvs
+
+# create the models
+palm_blr1 <- glm(formula = f1,
+                 data = palmetto,
+                 family = "binomial")
+
+palm_blr2 <- glm(formula = f2,
+                 data = palmetto,
+                 family = "binomial")
+
+blr1_tidy <- broom::tidy(palm_blr1)
+```
+
+## AICc
+
+```{r}
+# create a table to compare AICcs of the models
+aic <- AICcmodavg::aictab(list(palm_blr1, palm_blr2))
+
+# round table values to a reasonable number of digits
+aic$AICc[1] <- round(aic$AICc[1], 2)
+aic$AICc[2] <- round(aic$AICc[2], 2)
+aic$Delta_AICc[1] <- round(aic$Delta_AICc[1], 2)
+aic$Delta_AICc[2] <- round(aic$Delta_AICc[2], 2)
+aic$ModelLik[1] <- round(aic$ModelLik[1], 2)
+aic$ModelLik[2] <- round(aic$ModelLik[2], 2)
+aic$AICcWt[1] <- round(aic$AICcWt[1], 2)
+aic$AICcWt[2] <- round(aic$AICcWt[2], 2)
+aic$LL[1] <- round(aic$LL[1], 2)
+aic$LL[2] <- round(aic$LL[2], 2)
+aic$Cum.Wt[1] <- round(aic$Cum.Wt[1], 2)
+aic$Cum.Wt[2] <- round(aic$Cum.Wt[2], 2)
+
+# finalize table
+aic %>%
+  kable(col.names = c("model", "K", "AICc", "change in AICc", "model likelihood", "Akaike weight", "log likelihood", "cumulative Akaike weight")) %>% # finalize column names
+  kable_paper() # apply theme
+```
+
+## Cross validate
+
+10-fold cross-validation to compare model 1 to model 2
+
+```{r}
+# use caret package to automate cross validation
+set.seed(615) # set seed so same random numbers will be used for reproducibility
+
+train_ctrl <- trainControl(method = "repeatedcv",
+                           number = 10, # number of folds
+                           repeats = 10) # number of iterations
+
+# train for model 1
+model1 <- train(f1, data = palmetto,
+                method = "glm",
+                family = "binomial",
+                trControl = tr_ctrl)
+
+# train for model 2
+model2 <- train(f2, data = palmetto,
+                method = "glm",
+                family = "binomial",
+                trControl = tr_ctrl)
+
+
